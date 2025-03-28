@@ -9,6 +9,8 @@ import os
 from time import time 
 import PyPDF2
 import docx
+import pandas as pd
+
 
 embedder = OpenCLIPEmbeddingFunction()
 data_loader = ImageLoader()
@@ -16,7 +18,7 @@ data_loader = ImageLoader()
 start = time() 
 
 client = chromadb.PersistentClient(
-    path="backend/datastore",  # ChromaDB path
+    path="datastore",  # ChromaDB path
 )
 
 coll = client.get_or_create_collection(
@@ -44,12 +46,41 @@ def process_file(file_path: Path) -> tuple[str, dict]:
             return text.strip(), metadata
         except Exception as e:
             raise ValueError(f"Error processing PDF {file_path}: {e}")
+    elif file_path.suffix.lower() == '.docx':
+        try:
+            document = docx.Document(file_path)
+            text = "\n".join([para.text for para in document.paragraphs])
+            return text.strip(), metadata
+        except Exception as e:
+            raise ValueError(f"Error processing DOCX {file_path}: {e}")
+    elif file_path.suffix.lower() in {'.xlsx', '.xls'}:  # Handling Excel files
+        try:
+            df = pd.read_excel(file_path)
+            # Convert DataFrame to a CSV formatted string, you can adjust as needed.
+            text = df.to_csv(index=False)
+            return text.strip(), metadata
+        except Exception as e:
+            raise ValueError(f"Error processing Excel {file_path}: {e}")
+    elif file_path.suffix.lower() == '.csv':
+        try:
+            # Try reading CSV with appropriate parameters.
+            df = pd.read_csv(file_path, encoding="latin-1", engine='python', on_bad_lines='skip', sep=',')
+            text = df.to_csv(index=False)
+            return text.strip(), metadata
+        except Exception as e:
+            raise ValueError(f"Error processing CSV {file_path}: {e}")
     else:
         try:
-            content = file_path.read_text()
+            content = file_path.read_text()  # Try default (utf-8)
             return content.strip(), metadata
         except UnicodeDecodeError:
-            raise ValueError(f"Cannot read file as text: {file_path}")
+            try:
+                # Fallback to a different encoding, e.g., latin-1
+                content = file_path.read_text(encoding="latin-1")
+                return content.strip(), metadata
+            except Exception as e:
+                raise ValueError(f"Cannot read file as text: {file_path}: {e}")
+
 
 cur_file_id = 0
 cur_img_id = 0
@@ -202,6 +233,13 @@ def parse_files(collection: chromadb.Collection, directory: Path):
 
                 collection.add(documents=[extracted_text], ids=[file_id], metadatas=[file_metadata]) 
                 cur_file_id += 1 
+            elif file.suffix[1:] == "docx":
+                try:
+                    document = docx.Document(file)
+                    text = "\n".join([para.text for para in document.paragraphs])
+                    return text.strip(), metadata
+                except Exception as e:
+                    raise ValueError(f"Error processing DOCX {file}: {e}")
 
             # Handle text files
             else: 
@@ -229,7 +267,7 @@ print("Starting Parse")
 # Default paths for documents, desktop, and downloads
 # documents_dir = Path(os.environ.get("HOME")) / "Documents"
 # desktop = Path(os.environ.get("HOME")) / "Desktop"
-downloads = Path(os.environ.get("HOME")) / "Downloads"  # Set to Downloads
+downloads = Path(os.environ.get("HOME")) / "Desktop"  # Set to Downloads
 
 # You can choose which directory to index, for now we'll index Documents, Desktop, and Downloads
 # if documents_dir.exists():
