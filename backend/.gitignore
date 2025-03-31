@@ -4,3 +4,4 @@ surfvenv/
 
 __pycache__/
 
+datastore/

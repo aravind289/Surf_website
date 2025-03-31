@@ -9,6 +9,7 @@ import os
 from time import time 
 import PyPDF2
 import docx
+import zipfile
 
 embedder = OpenCLIPEmbeddingFunction()
 data_loader = ImageLoader()
@@ -16,7 +17,7 @@ data_loader = ImageLoader()
 start = time() 
 
 client = chromadb.PersistentClient(
-    path="backend/datastore",  # ChromaDB path
+    path="datastore",  # ChromaDB path
 )
 
 coll = client.get_or_create_collection(
@@ -24,35 +25,8 @@ coll = client.get_or_create_collection(
     embedding_function=embedder,
     data_loader=data_loader,
 )
+cur_file_id, cur_img_id  = 0,0
 
-
-
-def process_file(file_path: Path) -> tuple[str, dict]:
-    """Process a file and return its content and metadata."""
-    path_str = str(file_path)
-    metadata = {"filepath": path_str, "type": file_path.suffix[1:]}
-    
-    if file_path.suffix.lower() in {'.png', '.jpg', '.jpeg'}:
-        return path_str, metadata  # For images, return path
-    elif file_path.suffix.lower() == '.pdf':
-        try:
-            with open(file_path, 'rb') as pdf_file:
-                pdf_reader = PyPDF2.PdfReader(pdf_file)
-                text = ""
-                for page in pdf_reader.pages[:30]:  # Limit to first 30 pages
-                    text += page.extract_text()
-            return text.strip(), metadata
-        except Exception as e:
-            raise ValueError(f"Error processing PDF {file_path}: {e}")
-    else:
-        try:
-            content = file_path.read_text()
-            return content.strip(), metadata
-        except UnicodeDecodeError:
-            raise ValueError(f"Cannot read file as text: {file_path}")
-
-cur_file_id = 0
-cur_img_id = 0
 
 def parse_files(collection: chromadb.Collection, directory: Path):
     global cur_file_id, cur_img_id 
@@ -68,7 +42,6 @@ def parse_files(collection: chromadb.Collection, directory: Path):
             continue
 
         if file.is_dir():
-            # Skipping certain directories
             if file.name.lower() in {'adobe', 'nasa_adc_all_site_build', 'onedrive - personalmicrosoftsoftware.uci.edu', "high school", 'library', 'target', 'libraries', 'lib'}:
                 continue
 
@@ -79,90 +52,43 @@ def parse_files(collection: chromadb.Collection, directory: Path):
             parse_files(collection, file) 
         else:
             path = str(file)
+            print("what is the file",file)
+            print("--------",file.suffix)
             if file.name.startswith('.'):
                 continue
 
-            # Skip common file types and extensions
-            if file.suffix[1:].lower() in {
-                'exe', 'dll', 'so', 'pyc', 'pyo', 'bin',
-                'zip', 'tar', 'gz', 'rar', '7z',
-                'mp3', 'mp4', 'avi', 'mov',
-                'db', 'sqlite', 'sqlite3'
-            }:
+            if file.suffix[1:] in [
+                "dmg", "zip", "xls", "xlsx", "csv", "tar", "gz", "bz2", "xz", "7z", "rar", "iso", "exe", "dll", "bin",
+                "so", "obj", "class", "o", "pyc", "lock", "log", "tmp", "config", "cfg", "ini", "svg", "json", "xml", "yaml", "yml", "data"
+                "plist", "db", "db-wal", "db-shm", "mp4", "mpeg4", "mov", "avi", "mkv", "flv", "wmv", "webm", "lock", "lockb", "bin", "sh", "obj", "photosLibrary",
+                "html", "css", "timestamp", "ipynb", "env", "env.local", "ico", "code-workspace", "rst", "sln", "img", "js", "gif"
+            ]: 
+                continue 
+
+            if "recovery" in file.name.lower():
                 continue
 
-            # Process image files
-            if file.suffix[1:] in {"png", "jpg", "jpeg"}:
-                try:
-                    content, metadata = process_file(file)  # Process the image file
-                    if content.strip():
-                        image_id = f"img{cur_img_id}"
-                        collection.add(images=[asarray(Image.open(path))], ids=[image_id], metadatas=[metadata])
-                        cur_img_id += 1
-                except Exception as e:
-                    print(f"Error processing image {file.name}: {e}")
-                    continue
-
-            # Process PDF files
-            elif file.suffix[1:] == "pdf":
-                try:
-                    content, metadata = process_file(file)  # Process the PDF file
-                    if content.strip():
-                        file_id = f"pdf{cur_file_id}"
-                        collection.add(documents=[content], ids=[file_id], metadatas=[metadata])
-                        cur_file_id += 1
-                except Exception as e:
-                    print(f"Error processing PDF {file.name}: {e}")
-                    continue
-
-            # Process text files
-            else: 
-                try:
-                    content, metadata = process_file(file)  # Process the text file
-                    if content.strip():
-                        file_id = f"txt{cur_file_id}"
-                        collection.add(documents=[content], ids=[file_id], metadatas=[metadata])
-                        cur_file_id += 1
-                except UnicodeDecodeError:
-                    print(f"Skipping non-text file: {file.name}")
-                    continue
-
-    # global cur_file_id, cur_img_id 
-
-    for file in directory.iterdir():
-        if file.name in {"node_modules", "venv", ".venv", "__pycache__", ".git", 'data'}:
-            continue 
-
-        if "test" in str(file).lower():
-            continue 
-
-        if "targets" in str(file).lower():
-            continue
-
-        if file.is_dir():
-            if file.name.lower() in {'adobe', 'nasa_adc_all_site_build', 'onedrive - personalmicrosoftsoftware.uci.edu', "high school", 'library', 'target', 'libraries', 'lib'}:
+            if "d.ts" in file.name:
                 continue
 
-            if file.name.startswith('.'):
+            if "api" in file.name:
                 continue
 
-            print("Now in: ", str(file))
-            parse_files(collection, file) 
-        else:
-            path = str(file)
-            if file.name.startswith('.'):
+            if "key" in file.name:
                 continue
 
-            # Skip common file types and extensions
-            if file.suffix[1:].lower() in {
-                'exe', 'dll', 'so', 'pyc', 'pyo', 'bin',
-                'zip', 'tar', 'gz', 'rar', '7z',
-                'mp3', 'mp4', 'avi', 'mov',
-                'db', 'sqlite', 'sqlite3'
-            }:
+            if "csharp" in file.name:
                 continue
 
-            # Handle image files
+            if "xcworkspace" in file.name:
+                continue
+
+            if "__init__" in file.name:
+                continue
+
+            if "mod" in file.name:
+                continue
+            
             if file.suffix[1:] in {"png", "jpg", "jpeg"}:
                 try:
                     image = Image.open(path)
@@ -180,49 +106,73 @@ def parse_files(collection: chromadb.Collection, directory: Path):
                     print(f"Error processing image {file.name}: {e}")
                     continue
 
-            # Handle PDF files
             elif file.suffix[1:] == "pdf":
-                with open(file, 'rb') as pdf_file:
-                    pdf_reader = PyPDF2.PdfReader(pdf_file)
-                    num_pages = len(pdf_reader.pages)
+                # error handling in improper downloaded file
+                try:
+                    with open(file, 'rb') as pdf_file:
+                        pdf_reader = PyPDF2.PdfReader(pdf_file)
+                        num_pages = len(pdf_reader.pages)
+                        
+                        extracted_text = ""
+                        for page_num in range(min(num_pages, 30)):
+                            page = pdf_reader.pages[page_num]
+                            extracted_text += page.extract_text()
+
+                    if extracted_text.strip():
+                        file_id = f"pdf{cur_file_id}" 
+                        file_metadata = {
+                                "filepath": path,
+                                "location": "local"
+                            }
+                        collection.add(documents=[extracted_text], ids=[file_id], metadatas=[file_metadata]) 
+                        cur_file_id += 1
+                   
                     
-                    extracted_text = ""
-                    for page_num in range(min(num_pages, 30)):
-                        page = pdf_reader.pages[page_num]
-                        extracted_text += page.extract_text()
+                except PyPDF2.errors.PdfReadError:
+                    print(f"Skipping corrupted PDF file: {file}")
+                    continue  
+                except Exception as e:
+                    raise ValueError(f"Error processing PDF {path}: {e}")
 
-                file_id = f"pdf{cur_file_id}" 
-                file_metadata = {
-                        "filepath": path,
-                        "location": "local"
-                    }
-                
-                if extracted_text == "":
-                    continue 
-
-                collection.add(documents=[extracted_text], ids=[file_id], metadatas=[file_metadata]) 
-                cur_file_id += 1 
-
-            # Handle text files
+            elif file.suffix[1:] == "docx":
+                try:
+                    document = docx.Document(file)
+                    text = "\n".join([para.text for para in document.paragraphs])
+                    if text.strip():
+                        file_id = f"docx{cur_file_id}" 
+                        file_metadata = {
+                                "filepath": path,
+                                "location": "local"
+                            }
+                    
+                        collection.add(documents=[text], ids=[file_id], metadatas=[file_metadata]) 
+                        cur_file_id += 1 
+                except zipfile.BadZipFile:
+                    print(f"Skipping corrupted DOCX file: {file}")
+                    continue
+                except Exception as e:
+                    if 'application/vnd.openxmlformats-officedocument.themeManager+xml' in str(e):
+                        print(f"Skipping non-Word DOCX file (Invalid content type): {file}")
+                    else:
+                        raise ValueError(f"Error processing DOCX {file}: {e}")
+                        print(f"Error processing DOCX {file_path}: {e}")
+                    continue  # Skip this file and continue with the next iteration
+                    
             else: 
                 try:
                     file_content = file.read_text()
-                    file_id = f"txt{cur_file_id}"
-                    file_metadata = {
-                        "filepath": path,
-                        "location": "local"
-                    }
+                    if file_content.strip():                        
+                        file_id = f"txt{cur_file_id}"
+                        file_metadata = {
+                            "filepath": path,
+                            "location": "local"
+                        }
+                        collection.add(documents=[file_content], ids=[file_id], metadatas=[file_metadata])
 
-                    if file_content.strip() == "":
-                        continue
-
-                    collection.add(documents=[file_content], ids=[file_id], metadatas=[file_metadata])
-
-                    cur_file_id += 1 
+                        cur_file_id += 1 
                 except UnicodeDecodeError:
                     print(f"Skipping non-text file: {file.name}")
                     continue
-
 
 print("Starting Parse")
 
