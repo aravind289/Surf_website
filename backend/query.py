@@ -34,6 +34,7 @@ def main():
     else:
         query = input("Enter your search query: ")
 
+
     # print(f"\nSearching for: '{query}'")
     # print("-" * 50)
 

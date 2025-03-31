@@ -179,7 +179,7 @@ print("Starting Parse")
 # Default paths for documents, desktop, and downloads
 # documents_dir = Path(os.environ.get("HOME")) / "Documents"
 # desktop = Path(os.environ.get("HOME")) / "Desktop"
-downloads = Path(os.environ.get("HOME")) / "Downloads"  # Set to Downloads
+downloads = Path(os.environ.get("HOME")) / "Desktop"  # Set to Downloads
 
 # You can choose which directory to index, for now we'll index Documents, Desktop, and Downloads
 # if documents_dir.exists():

@@ -1,7 +1,8 @@
 # Node modules
 
 surfvenv/
-
+venv/
 __pycache__/
+backend/datastore/*
 
 datastore/
