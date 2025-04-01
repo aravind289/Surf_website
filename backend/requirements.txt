@@ -26,6 +26,9 @@ chardet==3.0.4
 charset-normalizer==3.4.0
 chroma-hnswlib==0.7.6
 chromadb==0.6.3
+sentence-transformers
+torch
+transformers
 click==8.1.7
 cloudpathlib==0.20.0
 coloredlogs==15.0.1

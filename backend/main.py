@@ -1,6 +1,5 @@
 import chromadb 
 from chromadb import Settings
-from chromadb.utils.embedding_functions.open_clip_embedding_function import OpenCLIPEmbeddingFunction
 from chromadb.utils.data_loaders import ImageLoader
 from PIL import Image 
 from numpy import asarray
@@ -10,8 +9,11 @@ from time import time
 import PyPDF2
 import docx
 import zipfile
+from sentence_transformers import SentenceTransformer
+from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
 
-embedder = OpenCLIPEmbeddingFunction()
+# Initialize the all-MiniLM-L6-v2 model for embeddings (smaller and faster)
+embedder = SentenceTransformerEmbeddingFunction(model_name="sentence-transformers/all-MiniLM-L6-v2")
 data_loader = ImageLoader()
 
 start = time() 
@@ -179,7 +181,7 @@ print("Starting Parse")
 # Default paths for documents, desktop, and downloads
 # documents_dir = Path(os.environ.get("HOME")) / "Documents"
 # desktop = Path(os.environ.get("HOME")) / "Desktop"
-downloads = Path(os.environ.get("HOME")) / "Desktop"  # Set to Downloads
+downloads = Path(os.environ.get("HOME")) / "Downloads"  # Set to Downloads
 
 # You can choose which directory to index, for now we'll index Documents, Desktop, and Downloads
 # if documents_dir.exists():

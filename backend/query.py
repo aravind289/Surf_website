@@ -1,14 +1,15 @@
 import chromadb 
 from chromadb import Settings
-from chromadb.utils.embedding_functions.open_clip_embedding_function import OpenCLIPEmbeddingFunction
 from chromadb.utils.data_loaders import ImageLoader
 import sys
 import os
 from pathlib import Path
+from sentence_transformers import SentenceTransformer
+from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
 
 def main():
-    # Initialize the embedding function and data loader
-    embedder = OpenCLIPEmbeddingFunction()
+    # Initialize the all-MiniLM-L6-v2 model for embeddings (smaller and faster)
+    embedder = SentenceTransformerEmbeddingFunction(model_name="sentence-transformers/all-MiniLM-L6-v2")
     data_loader = ImageLoader()
 
     # Connect to the ChromaDB client
