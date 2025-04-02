@@ -1,12 +1,12 @@
 # Semantic File Search
 
-A web application for semantic file search built with Next.js, FastAPI, and Chroma DB.
+A web application for semantic file search built with Next.js, FastAPI, and Chroma DB. This application indexes files from your system and allows you to search them using natural language queries.
 
 ## Project Structure
 
 ```
 ├── frontend/         # Next.js frontend application
-└── backend/          # FastAPI backend application
+└── backend/          # FastAPI backend application with ChromaDB
 ```
 
 ## Setup Instructions
@@ -29,9 +29,14 @@ A web application for semantic file search built with Next.js, FastAPI, and Chro
    pip install -r requirements.txt
    ```
 
-4. Run the FastAPI server:
+4. Index your files (by default, it indexes your Downloads folder):
    ```bash
-   uvicorn main:app --reload
+   python main.py
+   ```
+
+5. Run the FastAPI server:
+   ```bash
+   uvicorn api:app --reload
    ```
    The backend will be available at http://localhost:8000
 
@@ -55,12 +60,19 @@ A web application for semantic file search built with Next.js, FastAPI, and Chro
 
 ## Features
 
-- **Semantic File Search**: Upload files and search them using natural language queries
+- **Semantic File Search**: Search your indexed files using natural language queries
+- **Mac Notes-style UI**: Clean and intuitive interface inspired by the macOS Notes app
+- **Automatic File Indexing**: System automatically indexes files from your Downloads folder (configurable in main.py)
 - **Chroma DB Integration**: Utilizes Chroma DB for vector storage and semantic search capabilities
-- **Modern UI**: Clean and responsive user interface built with Next.js and Tailwind CSS
 
 ## API Endpoints
 
-- `GET /`: Check if the API is running
-- `POST /upload`: Upload a file for indexing
-- `GET /search?query=<search_term>`: Search for files using semantic search
+- `GET /api/search?query=<search_term>&limit=<number_of_results>`: Search for files using semantic search
+
+## Usage
+
+1. First run the backend server to ensure the API is available
+2. Launch the frontend application
+3. Enter your search query in the search bar at the bottom of the page
+4. View search results in the left panel
+5. Click on a result to view its full content in the right panel
