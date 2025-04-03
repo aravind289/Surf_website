@@ -118,7 +118,8 @@ def index_files(directory: Path, collection, encoding, text_splitter):
                 "chunk": idx,
                 "total_chunks": total_chunks,
                 "token_count": chunk_tokens,
-                "type": file.suffix.lower().strip(".")
+                "type": file.suffix.lower().strip("."),
+                "filename":file.stem
             }
             collection.add(
                 documents=[chunk],

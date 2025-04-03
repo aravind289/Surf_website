@@ -1,7 +1,7 @@
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 import chromadb
-from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
+from chromadb.utils import embedding_functions
 from chromadb.utils.data_loaders import ImageLoader
 import os
 from pathlib import Path
@@ -18,8 +18,11 @@ app.add_middleware(
 )
 
 # Initialize the embedding function and data loader
-embedder = SentenceTransformerEmbeddingFunction(model_name="sentence-transformers/all-MiniLM-L6-v2")
-data_loader = ImageLoader()
+openai_ef = embedding_functions.OpenAIEmbeddingFunction(
+    api_key=os.getenv("OPENAI_API_KEY"),
+    model_name="text-embedding-ada-002"
+)
+# data_loader = ImageLoader()
 
 # Connect to the ChromaDB client
 client = chromadb.PersistentClient(
@@ -28,13 +31,12 @@ client = chromadb.PersistentClient(
 
 # Get the collection
 collection = client.get_collection(
-    name="siftfiles",
-    embedding_function=embedder,
-    data_loader=data_loader,
+    name="my_documents",
+    embedding_function=openai_ef,
 )
 
 @app.get("/api/search")
-async def search(query: str = Query(..., min_length=1), limit: int = Query(10, ge=1, le=50)):
+async def search(query: str = Query(..., min_length=1)):
     """
     Search for documents based on a semantic query.
     
@@ -48,20 +50,23 @@ async def search(query: str = Query(..., min_length=1), limit: int = Query(10, g
     try:
         results = collection.query(
             query_texts=[query],
-            n_results=limit,
-            include=["metadatas", "documents", "distances"]
+            n_results=10,
+            include=["documents", "metadatas", "distances"]
         )
         
         # Format the results for the frontend
         formatted_results = []
+        all_results = []
         if results["ids"] and len(results["ids"][0]) > 0:
             for i, doc_id in enumerate(results["ids"][0]):
                 metadata = results["metadatas"][0][i]
                 distance = results["distances"][0][i] if "distances" in results else None
                 similarity = 1 - distance if distance is not None else None
                 
-                filepath = metadata.get("filepath", "Unknown path")
-                filename = os.path.basename(filepath)
+                filepath = metadata.get("source", "Unknown path")
+                print("filepath", filepath)
+                filename = metadata.get("filename", "Unknown filename")
+                print("filename", filename)
                 file_type = metadata.get("type", Path(filepath).suffix[1:] if Path(filepath).suffix else "Unknown type")
                 
                 # Get document content if available
