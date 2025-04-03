@@ -1,205 +1,164 @@
-import chromadb 
-from chromadb import Settings
-from chromadb.utils.data_loaders import ImageLoader
-from PIL import Image 
-from numpy import asarray
+import os
 from pathlib import Path
-import os 
-from time import time 
 import PyPDF2
 import docx
-import zipfile
-from sentence_transformers import SentenceTransformer
-from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
+import tiktoken
+from chromadb import PersistentClient
+from chromadb.utils import embedding_functions
+from langchain.text_splitter import RecursiveCharacterTextSplitter
 
-# Initialize the all-MiniLM-L6-v2 model for embeddings (smaller and faster)
-embedder = SentenceTransformerEmbeddingFunction(model_name="sentence-transformers/all-MiniLM-L6-v2")
-data_loader = ImageLoader()
+def initialize_encoder(model_name="text-embedding-ada-002"):
+    """Initialize and return the tiktoken encoder."""
+    return tiktoken.encoding_for_model(model_name)
 
-start = time() 
+def count_tokens(text: str, encoding) -> int:
+    """Count tokens using the provided tiktoken encoder."""
+    return len(encoding.encode(text))
 
-client = chromadb.PersistentClient(
-    path="datastore",  # ChromaDB path
-)
+# def chunk_text(text: str, encoding) -> list:
+    """
+    Splits text into chunks such that each chunk has no more than the encoder's max token limit.
+    Falls back to 8000 tokens if the encoder does not provide a model_max_length attribute.
+    """
+    max_tokens = getattr(encoding, "model_max_length", 8000)
+    tokens = encoding.encode(text)
+    if len(tokens) <= max_tokens:
+        return [text]
+    
+    words = text.split()
+    chunks = []
+    current_chunk = ""
+    current_tokens = 0
+    for word in words:
+        word_tokens = len(encoding.encode(word))
+        if current_tokens + word_tokens > max_tokens:
+            chunks.append(current_chunk.strip())
+            current_chunk = word + " "
+            current_tokens = word_tokens
+        else:
+            current_chunk += word + " "
+            current_tokens += word_tokens
+    if current_chunk:
+        chunks.append(current_chunk.strip())
+    print("WHAT ARE CHUNKS", chunks)
+    return chunks
 
-coll = client.get_or_create_collection(
-    name="siftfiles",
-    embedding_function=embedder,
-    data_loader=data_loader,
-)
-cur_file_id, cur_img_id  = 0,0
+def extract_text_from_pdf(file_path: Path) -> str:
+    """Extracts text from a PDF file using PyPDF2."""
+    text = ""
+    try:
+        with open(file_path, "rb") as f:
+            reader = PyPDF2.PdfReader(f)
+            for page in reader.pages:
+                page_text = page.extract_text()
+                if page_text:
+                    text += page_text + "\n"
+        return text.strip()
+    except Exception as e:
+        print(f"Error extracting text from PDF {file_path}: {e}")
+        return ""
 
+def extract_text_from_docx(file_path: Path) -> str:
+    """Extracts text from a DOCX file using python-docx."""
+    try:
+        doc = docx.Document(file_path)
+        text = "\n".join(para.text for para in doc.paragraphs)
+        return text.strip()
+    except Exception as e:
+        print(f"Error extracting text from DOCX {file_path}: {e}")
+        return ""
 
-def parse_files(collection: chromadb.Collection, directory: Path):
-    global cur_file_id, cur_img_id 
+def extract_text_from_txt(file_path: Path) -> str:
+    """Reads text from a TXT file."""
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            return f.read().strip()
+    except Exception as e:
+        print(f"Error extracting text from TXT {file_path}: {e}")
+        return ""
 
+def index_files(directory: Path, collection, encoding, text_splitter):
+    """
+    Walks through all files in the specified directory, extracts text (if applicable),
+    chunks the text, and adds the chunks to the provided ChromaDB collection.
+    """
     for file in directory.iterdir():
-        if file.name in {"node_modules", "venv", ".venv", "__pycache__", ".git", 'data'}:
-            continue 
-
-        if "test" in str(file).lower():
-            continue 
-
-        if "targets" in str(file).lower():
+        if file.suffix.lower() == ".pdf":
+            text = extract_text_from_pdf(file)
+        elif file.suffix.lower() == ".docx":
+            text = extract_text_from_docx(file)
+        elif file.suffix.lower() == ".txt":
+            text = extract_text_from_txt(file)
+        else:
+            print(f"Skipping unsupported file type: {file.name}")
             continue
 
-        if file.is_dir():
-            if file.name.lower() in {'adobe', 'nasa_adc_all_site_build', 'onedrive - personalmicrosoftsoftware.uci.edu', "high school", 'library', 'target', 'libraries', 'lib'}:
-                continue
+        if not text:
+            continue
 
-            if file.name.startswith('.'):
-                continue
+        total_tokens = count_tokens(text, encoding)
+        print(f"Indexing File: {file.name} | Total Tokens: {total_tokens}")
+        # decode tokens to understand which token id represent which word
+        # can be commented. Just for debugging
+        # decoded_tokens = [encoding.decode([t]) for t in tokens]
+        
+        # chunks = chunk_text(text, encoding)
+        chunks = text_splitter.split_text(text)
+        total_chunks = len(chunks)
+        
+        for idx, chunk in enumerate(chunks):
+            chunk_tokens = count_tokens(chunk, encoding)
+            print(str(file))
+            print(f"  Chunk {idx+1}/{total_chunks} | Tokens: {chunk_tokens}")
+            # Optionally print a preview for debugging
+            # print(f"  Chunk {idx+1}/{total_chunks} | Tokens: {chunk_tokens}")
+            doc_id = f"{file.stem}_chunk_{idx}"
+            metadata = {
+                "source": str(file),
+                "chunk": idx,
+                "total_chunks": total_chunks,
+                "token_count": chunk_tokens,
+                "type": file.suffix.lower().strip(".")
+            }
+            collection.add(
+                documents=[chunk],
+                ids=[doc_id],
+                metadatas=[metadata]
+            )
 
-            print("Now in: ", str(file))
-            parse_files(collection, file) 
-        else:
-            path = str(file)
-            print("what is the file",file)
-            print("--------",file.suffix)
-            if file.name.startswith('.'):
-                continue
+def main():
+    # Initialize the encoder and OpenAI embedding function.
+    encoding = initialize_encoder("text-embedding-ada-002")
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=getattr(encoding, "model_max_length", 8000),    # Adjust chunk size as needed.
+        chunk_overlap=200,  # Overlap to preserve context.
+        separators=["\n\n", "\n", " ", ""]
+    )
+    openai_ef = embedding_functions.OpenAIEmbeddingFunction(
+        api_key=os.getenv("OPENAI_API_KEY"),
+        model_name="text-embedding-ada-002"
+    )
 
-            if file.suffix[1:] in [
-                "dmg", "zip", "xls", "xlsx", "csv", "tar", "gz", "bz2", "xz", "7z", "rar", "iso", "exe", "dll", "bin",
-                "so", "obj", "class", "o", "pyc", "lock", "log", "tmp", "config", "cfg", "ini", "svg", "json", "xml", "yaml", "yml", "data"
-                "plist", "db", "db-wal", "db-shm", "mp4", "mpeg4", "mov", "avi", "mkv", "flv", "wmv", "webm", "lock", "lockb", "bin", "sh", "obj", "photosLibrary",
-                "html", "css", "timestamp", "ipynb", "env", "env.local", "ico", "code-workspace", "rst", "sln", "img", "js", "gif"
-            ]: 
-                continue 
+    # Create or connect to the persistent ChromaDB collection.
+    client = PersistentClient(path="datastore")
+    collection = client.get_or_create_collection(
+        name="my_documents",
+        embedding_function=openai_ef
+    )
 
-            if "recovery" in file.name.lower():
-                continue
+    # Define the directory that contains your files.
+    directory = Path(os.environ.get("HOME")) / "Downloads"
+    index_files(directory, collection, encoding,text_splitter)
+    print("Indexing complete.")
 
-            if "d.ts" in file.name:
-                continue
+    # Retrieve and print embeddings for indexed documents.
+    # we can comment this .
+    # results = collection.get(include=["embeddings", "metadatas"])
+    # print("\nEmbeddings for indexed documents:")
+    # for emb, metadata in zip(results["embeddings"], results["metadatas"]):
+    #     source = metadata.get("source", "Unknown")
+    #     print(f"Source: {source}")
+    #     print("Embedding (first 10 elements):", emb[:10], "... (length: {})".format(len(emb)))
 
-            if "api" in file.name:
-                continue
-
-            if "key" in file.name:
-                continue
-
-            if "csharp" in file.name:
-                continue
-
-            if "xcworkspace" in file.name:
-                continue
-
-            if "__init__" in file.name:
-                continue
-
-            if "mod" in file.name:
-                continue
-            
-            if file.suffix[1:] in {"png", "jpg", "jpeg"}:
-                try:
-                    image = Image.open(path)
-                    image = asarray(image)
-                    image_id = f"img{cur_img_id}"
-                    image_metadata = {
-                        "filepath": path,
-                        "location": "local"
-                    }
-
-                    collection.add(images=[image], ids=[image_id], metadatas=[image_metadata])
-
-                    cur_img_id += 1  
-                except Exception as e:
-                    print(f"Error processing image {file.name}: {e}")
-                    continue
-
-            elif file.suffix[1:] == "pdf":
-                # error handling in improper downloaded file
-                try:
-                    with open(file, 'rb') as pdf_file:
-                        pdf_reader = PyPDF2.PdfReader(pdf_file)
-                        num_pages = len(pdf_reader.pages)
-                        
-                        extracted_text = ""
-                        for page_num in range(min(num_pages, 30)):
-                            page = pdf_reader.pages[page_num]
-                            extracted_text += page.extract_text()
-
-                    if extracted_text.strip():
-                        file_id = f"pdf{cur_file_id}" 
-                        file_metadata = {
-                                "filepath": path,
-                                "location": "local"
-                            }
-                        collection.add(documents=[extracted_text], ids=[file_id], metadatas=[file_metadata]) 
-                        cur_file_id += 1
-                   
-                    
-                except PyPDF2.errors.PdfReadError:
-                    print(f"Skipping corrupted PDF file: {file}")
-                    continue  
-                except Exception as e:
-                    raise ValueError(f"Error processing PDF {path}: {e}")
-
-            elif file.suffix[1:] == "docx":
-                try:
-                    document = docx.Document(file)
-                    text = "\n".join([para.text for para in document.paragraphs])
-                    if text.strip():
-                        file_id = f"docx{cur_file_id}" 
-                        file_metadata = {
-                                "filepath": path,
-                                "location": "local"
-                            }
-                    
-                        collection.add(documents=[text], ids=[file_id], metadatas=[file_metadata]) 
-                        cur_file_id += 1 
-                except zipfile.BadZipFile:
-                    print(f"Skipping corrupted DOCX file: {file}")
-                    continue
-                except Exception as e:
-                    if 'application/vnd.openxmlformats-officedocument.themeManager+xml' in str(e):
-                        print(f"Skipping non-Word DOCX file (Invalid content type): {file}")
-                    else:
-                        raise ValueError(f"Error processing DOCX {file}: {e}")
-                        print(f"Error processing DOCX {file_path}: {e}")
-                    continue  # Skip this file and continue with the next iteration
-                    
-            else: 
-                try:
-                    file_content = file.read_text()
-                    if file_content.strip():                        
-                        file_id = f"txt{cur_file_id}"
-                        file_metadata = {
-                            "filepath": path,
-                            "location": "local"
-                        }
-                        collection.add(documents=[file_content], ids=[file_id], metadatas=[file_metadata])
-
-                        cur_file_id += 1 
-                except UnicodeDecodeError:
-                    print(f"Skipping non-text file: {file.name}")
-                    continue
-
-print("Starting Parse")
-
-# Default paths for documents, desktop, and downloads
-# documents_dir = Path(os.environ.get("HOME")) / "Documents"
-# desktop = Path(os.environ.get("HOME")) / "Desktop"
-downloads = Path(os.environ.get("HOME")) / "Downloads"  # Set to Downloads
-
-# You can choose which directory to index, for now we'll index Documents, Desktop, and Downloads
-# if documents_dir.exists():
-#     print("Parsing Documents directory...")
-#     parse_files(coll, documents_dir)
-
-# if desktop.exists():
-#     print("Parsing Desktop directory...")
-#     parse_files(coll, desktop)
-
-if downloads.exists():
-    print("Parsing Downloads directory...")
-    parse_files(coll, downloads)
-
-print("Done with file parse")
-
-print("Time taken: ", time() - start)
-
-# Optional: You can run a search query on the indexed files
-# results = coll.query(query_texts=["What are iterators and algorithms in Python"], n_results=5)
-# print(results)
+if __name__ == "__main__":
+    main()
