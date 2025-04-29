@@ -396,7 +396,7 @@ async def search(query: str = Query(..., min_length=1)):
                     "filepath": filepath,
                     "filetype": file_type,
                     "similarity": similarity,
-                    "preview": preview,
+                    "preview": " ".join(preview),
                     "content": content
                 })
         
