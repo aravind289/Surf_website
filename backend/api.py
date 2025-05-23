@@ -33,15 +33,7 @@ openai_ef = embedding_functions.OpenAIEmbeddingFunction(
 # Ensure datastore directory exists with proper permissions
 datastore_path = Path("datastore").absolute()
 
-# Recreate the datastore directory to avoid any corruption issues
-if datastore_path.exists():
-    import shutil
-    try:
-        # Attempt to remove the directory if it exists
-        shutil.rmtree(str(datastore_path))
-        print(f"Removed existing datastore directory at {datastore_path}")
-    except Exception as e:
-        print(f"Warning: Could not remove existing datastore: {e}")
+
 
 # Create a fresh datastore directory
 try:
@@ -127,6 +119,8 @@ def extract_text_from_txt(file_path: Path) -> str:
     except Exception as e:
         print(f"Error extracting text from TXT {file_path}: {e}")
         return ""
+    
+# have to do csv , excel as well. have to see if there is a process to just use one helper function to process everything
 
 # Models for API requests and responses
 class FolderList(BaseModel):
@@ -151,109 +145,156 @@ def index_files_from_folders(folders: List[str], custom_folders: List[str]):
     
     try:
         # Initialize the encoder and text splitter
-        encoding = initialize_encoder("text-embedding-ada-002")
+        # encoding = 
+        initialize_encoder("text-embedding-ada-002")
         text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=8000,    # Larger chunks for faster processing
             chunk_overlap=200,   # Overlap to preserve context
             separators=["\n\n", "\n", " ", ""]
         )
         
-        # Try to reset the collection if it exists
+        # Create collection if it doesn't exist or get the existing one
         try:
-            client.delete_collection("my_documents")
-            print("Deleted existing collection")
+            collection = client.get_collection(
+                name="my_documents",
+                embedding_function=openai_ef,
+            )
+            print("Using existing collection")
         except Exception as e:
-            print(f"No existing collection to delete: {e}")
+            print(f"No existing collection found: {e}")
+            collection = client.create_collection(
+                name="my_documents",
+                embedding_function=openai_ef,
+                metadata={"description": "Indexed documents for semantic search"}
+            )
+            print("Created fresh collection for document indexing")
         
-        # Create a fresh collection
-        collection = client.create_collection(
-            name="my_documents",
-            embedding_function=openai_ef,
-            metadata={"description": "Indexed documents for semantic search"}
-        )
-        print("Created fresh collection for document indexing")
+        # Get list of already indexed files
+        try:
+            # Create a metadata collection if it doesn't exist
+            try:
+                metadata_collection = client.get_collection("file_metadata")
+            except:
+                metadata_collection = client.create_collection("file_metadata")
+            
+            # Get all indexed file paths and their modification times
+            results = metadata_collection.get()
+            print("what is the metadata",results)
+            indexed_files = {}
+            if results and "metadatas" in results and results["metadatas"]:
+                for metadata in results["metadatas"]:
+                    if "filepath" in metadata:
+                        indexed_files[metadata["filepath"]] = metadata.get("last_modified", 0)
+        except Exception as e:
+            print(f"Error getting indexed files: {e}")
+            indexed_files = {}
         
+        # Prepare list of directories to process
+        # [rest of the directory preparation code remains unchanged]
         # Prepare list of directories to process
         directories = []
         home_dir = Path(os.environ.get("HOME"))
-        
+
         # Add standard folders
         folder_mapping = {
             "downloads": home_dir / "Downloads",
             "documents": home_dir / "Documents",
             "desktop": home_dir / "Desktop"
         }
-        
+
         for folder in folders:
             if folder.lower() in folder_mapping and folder_mapping[folder.lower()].exists():
                 directories.append(folder_mapping[folder.lower()])
-        
+
         # Add custom folders
         for custom_folder in custom_folders:
             folder_path = Path(custom_folder)
             if folder_path.exists() and folder_path.is_dir():
                 directories.append(folder_path)
         
-        # Count total files to process (including subdirectories)
+        # Count total files to process (only new or modified files)
         total_files = 0
+        files_to_process = []
         for directory in directories:
             # Process files recursively through all subdirectories
             for file in directory.glob("**/*"):
                 if file.is_file() and file.suffix.lower() in [".pdf", ".docx", ".txt"]:
-                    total_files += 1
+                    filepath_str = str(file.absolute())
+                    last_modified = file.stat().st_mtime
+                    
+                    # Check if file is new or modified
+                    if filepath_str not in indexed_files or indexed_files[filepath_str] < last_modified:
+                        total_files += 1
+                        files_to_process.append((file, last_modified))
         
         embedding_status["total_files"] = total_files
         embedding_status["processed_files"] = 0
         embedding_status["is_running"] = True
         embedding_status["status"] = "running"
         
-        # Process each directory
-        for directory in directories:
-            # Process files recursively through all subdirectories
-            for file in directory.glob("**/*"):
-                if not embedding_status["is_running"]:
-                    # Stop if cancelled
-                    embedding_status["status"] = "cancelled"
-                    return
-                
-                if file.is_file():
-                    if file.suffix.lower() == ".pdf":
-                        text = extract_text_from_pdf(file)
-                    elif file.suffix.lower() == ".docx":
-                        text = extract_text_from_docx(file)
-                    elif file.suffix.lower() == ".txt":
-                        text = extract_text_from_txt(file)
-                    else:
-                        continue  # Skip unsupported file types
-                    
-                    if not text:
-                        continue
-                    
-                    # Update status
-                    embedding_status["current_file"] = str(file.name)
-                    
-                    # Split text into chunks
-                    chunks = text_splitter.split_text(text)
-                    
-                    # Add chunks to collection
-                    for idx, chunk in enumerate(chunks):
-                        doc_id = f"{file.stem}_chunk_{idx}"
-                        metadata = {
-                            "source": str(file),
-                            "chunk": idx,
-                            "total_chunks": len(chunks),
-                            "type": file.suffix.lower().strip("."),
-                            "filename": file.name
-                        }
-                        collection.add(
-                            documents=[chunk],
-                            ids=[doc_id],
-                            metadatas=[metadata]
-                        )
-                    
-                    # Update progress
-                    embedding_status["processed_files"] += 1
-                    embedding_status["progress_percentage"] = (embedding_status["processed_files"] / embedding_status["total_files"]) * 100
+        # Process each file
+        for file, last_modified in files_to_process:
+            if not embedding_status["is_running"]:
+                # Stop if cancelled
+                embedding_status["status"] = "cancelled"
+                return
+            
+            filepath_str = str(file.absolute())
+            
+            if file.suffix.lower() == ".pdf":
+                text = extract_text_from_pdf(file)
+            elif file.suffix.lower() == ".docx":
+                text = extract_text_from_docx(file)
+            elif file.suffix.lower() == ".txt":
+                text = extract_text_from_txt(file)
+            else:
+                continue  # Skip unsupported file types
+            
+            if not text:
+                continue
+            
+            # Update status
+            embedding_status["current_file"] = str(file.name)
+            
+            # Delete existing chunks for this file if any
+            try:
+                existing_chunks = collection.get(
+                    where={"source": filepath_str}
+                )
+                if existing_chunks and existing_chunks["ids"]:
+                    collection.delete(ids=existing_chunks["ids"])
+            except Exception as e:
+                print(f"Error removing existing chunks: {e}")
+            
+            # Split text into chunks
+            chunks = text_splitter.split_text(text)
+            
+            # Add chunks to collection
+            for idx, chunk in enumerate(chunks):
+                doc_id = f"{file.stem}_{int(last_modified)}_{idx}"
+                metadata = {
+                    "source": filepath_str,
+                    "chunk": idx,
+                    "total_chunks": len(chunks),
+                    "type": file.suffix.lower().strip("."),
+                    "filename": file.name
+                }
+                collection.add(
+                    documents=[chunk],
+                    ids=[doc_id],
+                    metadatas=[metadata]
+                )
+            
+            # Update file metadata
+            metadata_collection.upsert(
+                ids=[filepath_str],
+                documents=[file.name],
+                metadatas=[{"filepath": filepath_str, "last_modified": last_modified}]
+            )
+            
+            # Update progress
+            embedding_status["processed_files"] += 1
+            embedding_status["progress_percentage"] = (embedding_status["processed_files"] / embedding_status["total_files"]) * 100
         
         # Mark as completed
         embedding_status["status"] = "completed"
@@ -407,4 +448,4 @@ async def search(query: str = Query(..., min_length=1)):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run("api:app", host="0.0.0.0", port=8000, reload= True)
