@@ -119,8 +119,29 @@ def extract_text_from_txt(file_path: Path) -> str:
     except Exception as e:
         print(f"Error extracting text from TXT {file_path}: {e}")
         return ""
-    
-# have to do csv , excel as well. have to see if there is a process to just use one helper function to process everything
+
+def extract_text_from_csv(file_path: Path) -> str:
+    """Reads text from a CSV file."""
+    try:
+        import pandas as pd
+        df = pd.read_csv(file_path, dtype=str, header=None)
+        text = "\n".join([",".join(row.dropna().astype(str)) for _, row in df.iterrows()])
+        return text
+    except Exception as e:
+        print(f"Error extracting text from CSV {file_path}: {e}")
+        return ""
+
+def extract_text_from_image(file_path: Path) -> str:
+    """Extract text from an image using OCR."""
+    try:
+        from PIL import Image
+        import pytesseract
+        return pytesseract.image_to_string(Image.open(file_path))
+    except Exception as e:
+        print(f"Error extracting text from image {file_path}: {e}")
+        return ""
+
+# TODO: consider adding Excel support and unifying extraction logic
 
 # Models for API requests and responses
 class FolderList(BaseModel):
@@ -179,7 +200,6 @@ def index_files_from_folders(folders: List[str], custom_folders: List[str]):
             
             # Get all indexed file paths and their modification times
             results = metadata_collection.get()
-            print("what is the metadata",results)
             indexed_files = {}
             if results and "metadatas" in results and results["metadatas"]:
                 for metadata in results["metadatas"]:
@@ -218,7 +238,15 @@ def index_files_from_folders(folders: List[str], custom_folders: List[str]):
         for directory in directories:
             # Process files recursively through all subdirectories
             for file in directory.glob("**/*"):
-                if file.is_file() and file.suffix.lower() in [".pdf", ".docx", ".txt"]:
+                if file.is_file() and file.suffix.lower() in [
+                    ".pdf",
+                    ".docx",
+                    ".txt",
+                    ".csv",
+                    ".png",
+                    ".jpg",
+                    ".jpeg",
+                ]:
                     filepath_str = str(file.absolute())
                     last_modified = file.stat().st_mtime
                     
@@ -241,12 +269,17 @@ def index_files_from_folders(folders: List[str], custom_folders: List[str]):
             
             filepath_str = str(file.absolute())
             
-            if file.suffix.lower() == ".pdf":
+            suffix = file.suffix.lower()
+            if suffix == ".pdf":
                 text = extract_text_from_pdf(file)
-            elif file.suffix.lower() == ".docx":
+            elif suffix == ".docx":
                 text = extract_text_from_docx(file)
-            elif file.suffix.lower() == ".txt":
+            elif suffix == ".txt":
                 text = extract_text_from_txt(file)
+            elif suffix == ".csv":
+                text = extract_text_from_csv(file)
+            elif suffix in [".png", ".jpg", ".jpeg"]:
+                text = extract_text_from_image(file)
             else:
                 continue  # Skip unsupported file types
             
@@ -268,8 +301,11 @@ def index_files_from_folders(folders: List[str], custom_folders: List[str]):
             
             # Split text into chunks
             chunks = text_splitter.split_text(text)
-            
-            # Add chunks to collection
+
+            # Prepare batch lists for faster embedding
+            batch_docs = []
+            batch_ids = []
+            batch_metadatas = []
             for idx, chunk in enumerate(chunks):
                 doc_id = f"{file.stem}_{int(last_modified)}_{idx}"
                 metadata = {
@@ -279,11 +315,16 @@ def index_files_from_folders(folders: List[str], custom_folders: List[str]):
                     "type": file.suffix.lower().strip("."),
                     "filename": file.name
                 }
-                collection.add(
-                    documents=[chunk],
-                    ids=[doc_id],
-                    metadatas=[metadata]
-                )
+                batch_docs.append(chunk)
+                batch_ids.append(doc_id)
+                batch_metadatas.append(metadata)
+
+            # Add all chunks in one call to reduce API overhead
+            collection.add(
+                documents=batch_docs,
+                ids=batch_ids,
+                metadatas=batch_metadatas
+            )
             
             # Update file metadata
             metadata_collection.upsert(
@@ -418,9 +459,7 @@ async def search(query: str = Query(..., min_length=1)):
                 similarity = 1 - distance if distance is not None else None
                 
                 filepath = metadata.get("source", "Unknown path")
-                print("filepath", filepath)
                 filename = metadata.get("filename", "Unknown filename")
-                print("filename", filename)
                 file_type = metadata.get("type", Path(filepath).suffix[1:] if Path(filepath).suffix else "Unknown type")
                 
                 # Get document content if available
@@ -448,4 +487,4 @@ async def search(query: str = Query(..., min_length=1)):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("api:app", host="0.0.0.0", port=8000, reload= True)
+    uvicorn.run("api:app", host="0.0.0.0", port=8000, reload=True)

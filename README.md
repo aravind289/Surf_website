@@ -57,6 +57,7 @@ A web application for semantic file search built with Next.js, FastAPI, and Chro
    npm run dev
    ```
    The frontend will be available at http://localhost:3000
+   Set `NEXT_PUBLIC_BACKEND_URL` in `.env.local` if your backend runs elsewhere
 
 ## Features
 
@@ -64,6 +65,8 @@ A web application for semantic file search built with Next.js, FastAPI, and Chro
 - **Mac Notes-style UI**: Clean and intuitive interface inspired by the macOS Notes app
 - **Automatic File Indexing**: System automatically indexes files from your Downloads folder (configurable in main.py)
 - **Chroma DB Integration**: Utilizes Chroma DB for vector storage and semantic search capabilities
+- **CSV and Image Support**: Indexes CSV files and images (PNG, JPG, JPEG) in addition to PDF, DOCX, and TXT formats
+- **Batch Embedding Optimization**: Adds document chunks in batches for faster indexing
 
 ## API Endpoints
 
@@ -76,3 +79,11 @@ A web application for semantic file search built with Next.js, FastAPI, and Chro
 3. Enter your search query in the search bar at the bottom of the page
 4. View search results in the left panel
 5. Click on a result to view its full content in the right panel
+
+## Deployment on Vercel
+
+1. Install the [Vercel CLI](https://vercel.com/docs/cli) and log in
+2. From the project root, run `vercel` and follow the prompts
+3. Set the `NEXT_PUBLIC_BACKEND_URL` environment variable to your deployed FastAPI endpoint
+4. Vercel will build the Next.js frontend and the `api/index.py` serverless function
+5. After deployment, open the generated Vercel URL in your browser
