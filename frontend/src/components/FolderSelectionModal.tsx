@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { getAvailableFolders, startIndexing, IndexingRequest } from '@/services/api';
+import { useState, useEffect, useCallback } from 'react';
+import { getAvailableFolders, IndexingRequest } from '@/services/api';
 
 interface FolderSelectionModalProps {
   isOpen: boolean;
@@ -17,13 +17,7 @@ export default function FolderSelectionModal({ isOpen, onClose, onStartIndexing 
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (isOpen) {
-      fetchAvailableFolders();
-    }
-  }, [isOpen]);
-
-  const fetchAvailableFolders = async () => {
+  const fetchAvailableFolders = useCallback(async () => {
     setIsLoading(true);
     setError(null);
     try {
@@ -40,7 +34,13 @@ export default function FolderSelectionModal({ isOpen, onClose, onStartIndexing 
     } finally {
       setIsLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    if (isOpen) {
+      fetchAvailableFolders();
+    }
+  }, [isOpen, fetchAvailableFolders]);
 
   const handleFolderToggle = (folder: string) => {
     if (selectedFolders.includes(folder)) {
